@@ -1,0 +1,88 @@
+trigger:
+  branches:
+    include:
+    - main
+    - master
+    - minharelease
+pool:
+  vmImage: "ubuntu-latest"
+variables:
+- name: rm
+  value: rm552618
+- name: location
+  value: eastus
+- name: resourceGroup
+  value: rg-challenge-odonto
+- name: service-plan
+  value: planChallengeOdonto
+- name: app-name
+  value: challenge-odonto-$(rm)
+- name: runtime
+  value: JAVA:17-java17
+- name: sku
+  value: F1
+- name: nome-artefato
+  value: ChallengeOdonto
+stages:
+- stage: CriarInfra
+  jobs:
+  - job: criaWebApp
+    displayName: Criar ou atualizar o Serviço de Aplicativo
+    steps:
+    - task: AzureCLI@2
+      inputs:
+        azureSubscription: 'e0a2086b-79e2-49a4-a0ac-57f6a94ade12'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          # Criar o Grupo de Recursos
+          az group create --location $(location) --name $(resourceGroup)
+          # Criar o Plano de Serviço com SO igual a Linux
+          az appservice plan create -g $(resourceGroup) -n $(service-plan) --is-linux --sku $(sku)
+          # Criar um Serviço de Aplicativo com JAVA 17 SE como runtime
+          az webapp create -g $(resourceGroup) -p $(service-plan) -n $(app-name) --runtime "$(runtime)"
+        visibleAzLogin: false
+- stage: BuildApp
+  variables:
+  - name: mavenPOMFile
+    value: 'pom.xml'
+  jobs:
+  - job: buildWebApp
+    displayName: Realizar o Build do App
+    steps:
+    - task: Maven@4
+      displayName: 'Build ChallengeOdonto'
+      inputs:
+        mavenPomFile: '$(mavenPOMFile)'
+        testRunTitle: 'Testes Unitários'
+        jdkVersionOption: 1.17
+        goals: 'clean package -DskipTests'
+    - task: CopyFiles@2
+      displayName: 'Copiar a aplicação ChallengeOdonto'
+      inputs:
+        SourceFolder: '$(system.defaultworkingdirectory)'
+        Contents: 'target/*.jar'
+        TargetFolder: '$(build.artifactstagingdirectory)'
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publicar artefato do Build ChallengeOdonto'
+      inputs:
+        PathtoPublish: '$(build.artifactstagingdirectory)'
+        ArtifactName: $(nome-artefato)
+- stage: DeployApp
+  jobs:
+  - job: DeployWebApp
+    displayName: Deploy no Serviço de Aplicativo
+    steps:
+    - task: DownloadBuildArtifacts@1
+      displayName: 'Baixar artefato gerado'
+      inputs:
+        buildType: 'current'
+        downloadType: 'specific'
+        downloadPath: '$(System.DefaultWorkingDirectory)'
+    - task: AzureRmWebAppDeployment@4
+      displayName: 'Deploy ChallengeOdonto'
+      inputs:
+        azureSubscription: 'e0a2086b-79e2-49a4-a0ac-57f6a94ade12'
+        appType: 'webApp'
+        WebAppName: $(app-name)
+        packageForLinux: '$(System.DefaultWorkingDirectory)/$(nome-artefato)/target/*.jar'
